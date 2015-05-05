@@ -72,6 +72,7 @@ def run_and_look_for_matches(command, retrieve_path):
   # "WindowsError: [Error 6] The handle is invalid" when running this script.
   command_output = os.popen(command).readlines()
 
+  #this loop is still too big!
   for line in command_output:
     if line.count("chrome.dll") > 0 or line.count("chrome_child.dll") > 0:
       match = pdb_re.match(line)
