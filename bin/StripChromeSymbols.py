@@ -48,9 +48,17 @@ import tempfile
 import shutil
 #import subprocess
 
-def run_and_look_for_matches(command):
+def run_and_look_for_matches(command, retrieve_path):
+
+  # Each symbol file that we pdbcopy gets copied to a separate directory so
+  # that we can support decoding symbols for multiple chrome versions without
+  # filename collisions.
   tempdirs = []
+
+  # Keep track of the local symbol files so that we can temporarily rename them
+  # to stop xperf from using -- rename them from .pdb to .pdbx
   local_symbol_files = []
+  
   symcache_files = []
   found_uncached = False
   # Typical output looks like:
@@ -80,8 +88,8 @@ def run_and_look_for_matches(command):
         print("Found uncached reference to %s: %s - %s" % (filepart, guid, age, ))
         symcache_files.append(symcache_file)
         pdb_cache_path = None
-        retrieve_ommand = "%s %s %s %s" % (retrieve_path, guid, age, filepart)
-        print("> %s" % retrieve_ommand)
+        retrieve_command = "%s %s %s %s" % (retrieve_path, guid, age, filepart)
+        print(">%s is executing %s" % (os.path.basename(__file__), retrieve_command))
         for subline in os.popen(retrieve_ommand):
           print(subline.strip())
           cache_match = pdb_cached_re.match(subline.strip())
@@ -100,7 +108,10 @@ def run_and_look_for_matches(command):
           for copyline in os.popen("%s %s %s -p" % (pdbcopy_path, pdb_cache_path, dest_path)):
             print(copyline.strip())
         else:
-          print("Failed to retrieve symbols. Check for RetrieveSymbols.exe and support files.")
+          if os.path.exists(retrieve_path):
+            print("Failed to retrieve symbols. Check for support files.")
+          else:
+            print("Failed to retrieve symbols. Check for RetrieveSymbols.exe and support files.")
   return (found_uncached, tempdirs, local_symbol_files, symcache_files)
 
 def rename_pdbs(local_symbol_files):
@@ -125,6 +136,33 @@ def delete_stripped_pdbs(error, tempdirs):
     for directory in tempdirs:
       shutil.rmtree(directory, ignore_errors=True)
 
+def copy_and_check_important_files():
+  """
+  RetrieveSymbols.exe requires some support files!
+    [dbghelp.dll, symsrv.dll] must be in the same directory as RetrieveSymbols.exe
+    pdbcopy.exe must be in the path, so we copy them all to the
+    script directory.
+  """
+  script_dir = os.path.split(sys.argv[0])[0]
+  retrieve_path = os.path.join(script_dir, "RetrieveSymbols.exe")
+  pdbcopy_path = os.path.join(script_dir, "pdbcopy.exe")
+
+  for third_party in ["pdbcopy.exe", "dbghelp.dll", "symsrv.dll"]:
+    if not os.path.exists(third_party):
+      third_party_dir = os.path.join(script_dir, r"..\third_party", third_party)
+      source = os.path.normpath(third_party_dir)
+      path_to_third_party_file = os.path.join(script_dir, third_party)
+      dest = os.path.normpath(path_to_third_party_file)
+      shutil.copy2(source, dest)
+  if not os.path.exists(pdbcopy_path):
+    print("pdbcopy.exe not found. No symbol stripping is possible.")
+    sys.exit(-1)
+  if not os.path.exists(retrieve_path):
+    print("RetrieveSymbols.exe not found. No symbol retrieval is possible.")
+    sys.exit(-1)
+  return retrieve_path
+
+
 def main():
   if len(sys.argv) < 2:
     print("Usage: %s trace.etl" % sys.argv[0])
@@ -135,44 +173,14 @@ def main():
     print("Chromium symbol server is not in _NT_SYMBOL_PATH. No symbol stripping needed.")
     sys.exit(0)
 
-  script_dir = os.path.split(sys.argv[0])[0]
-  retrieve_path = os.path.join(script_dir, "RetrieveSymbols.exe")
-  pdbcopy_path = os.path.join(script_dir, "pdbcopy.exe")
+  retrieve_path = copy_and_check_important_files()
 
-  # RetrieveSymbols.exe requires some support files. dbghelp.dll and symsrv.dll
-  # have to be in the same directory as RetrieveSymbols.exe and pdbcopy.exe must
-  # be in the path, so copy them all to the script directory.
-  for third_party in ["pdbcopy.exe", "dbghelp.dll", "symsrv.dll"]:
-    if not os.path.exists(third_party):
-      source = os.path.normpath(os.path.join(script_dir, r"..\third_party", \
-          third_party))
-      dest = os.path.normpath(os.path.join(script_dir, third_party))
-      shutil.copy2(source, dest)
-
-  if not os.path.exists(pdbcopy_path):
-    print("pdbcopy.exe not found. No symbol stripping is possible.")
-    sys.exit(0)
-
-  if not os.path.exists(retrieve_path):
-    print("RetrieveSymbols.exe not found. No symbol retrieval is possible.")
-    sys.exit(0)
-
-  tracename = sys.argv[1]
   print("Pre-translating chrome symbols from stripped PDBs to avoid 10-15 minute translation times.")
 
-  # Each symbol file that we pdbcopy gets copied to a separate directory so
-  # that we can support decoding symbols for multiple chrome versions without
-  # filename collisions.
-  tempdirs = []
-  symcache_files = []
-  
-  # Keep track of the local symbol files so that we can temporarily rename them
-  # to stop xperf from using -- rename them from .pdb to .pdbx
-  local_symbol_files = []
-
+  tracename = sys.argv[1]
   command = 'xperf -i "%s" -tle -tti -a symcache -dbgid' % tracename
-  print("> %s" % command)
-  (found_uncached, tempdirs, local_symbol_files, symcache_files) = run_and_look_for_matches(command)
+  print(">%s is executing %s" % (os.path.basename(__file__), command))
+  (found_uncached, tempdirs, local_symbol_files, symcache_files) = run_and_look_for_matches(command, retrieve_path)
 
   if tempdirs:
     symbol_path = ";".join(tempdirs)
@@ -180,15 +188,15 @@ def main():
     os.environ["_NT_SYMBOL_PATH"] = symbol_path
     rename_pdbs(local_symbol_files)
     gen_command = 'xperf -i "%s" -symbols -tle -tti -a symcache -build' % tracename
-    print("> %s" % gen_command)
-    
+    print(">%s is executing %s" % (os.path.basename(__file__),gen_command))
+
     #what is this loop for???
     for line in os.popen(gen_command).readlines():
       pass # Don't print line
     for local_pdb in local_symbol_files:
       temp_name = local_pdb + "x"
       os.rename(temp_name, local_pdb)
-    
+
     error = check_for_symcache_files(symcache_files)
     delete_stripped_pdbs(error, tempdirs)
   else:
