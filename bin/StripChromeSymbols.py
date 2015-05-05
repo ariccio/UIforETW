@@ -58,14 +58,14 @@ def run_and_look_for_matches(command, retrieve_path):
   # Keep track of the local symbol files so that we can temporarily rename them
   # to stop xperf from using -- rename them from .pdb to .pdbx
   local_symbol_files = []
-  
+
   symcache_files = []
   found_uncached = False
   # Typical output looks like:
   # "[RSDS] PdbSig: {be90dbc6-fe31-4842-9c72-7e2ea88f0adf}; Age: 1; Pdb: C:\b\build\slave\win\build\src\out\Release\syzygy\chrome.dll.pdb"
   pdb_re = re.compile(r'"\[RSDS\] PdbSig: {(.*-.*-.*-.*-.*)}; Age: (.*); Pdb: (.*)"')
   pdb_cached_re = re.compile(r"Found .*file - placed it in (.*)")
-  
+
   #raw_command_output = subprocess.check_output(command)
   #command_output = str(raw_command_output).splitlines()
   # os.popen() is deprecated, but it *works*. Using subprocess leads to
