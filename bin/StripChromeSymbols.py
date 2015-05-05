@@ -174,6 +174,8 @@ def main():
     rename_pdbs(local_symbol_files)
     gen_command = 'xperf -i "%s" -symbols -tle -tti -a symcache -build' % tracename
     print("> %s" % gen_command)
+    
+    #what is this loop for???
     for line in os.popen(gen_command).readlines():
       pass # Don't print line
     for local_pdb in local_symbol_files:
