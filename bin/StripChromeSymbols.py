@@ -91,7 +91,7 @@ def run_and_look_for_matches(command, retrieve_path):
         pdb_cache_path = None
         retrieve_command = "%s %s %s %s" % (retrieve_path, guid, age, filepart)
         print(">%s is executing %s" % (os.path.basename(__file__), retrieve_command))
-        for subline in os.popen(retrieve_ommand):
+        for subline in os.popen(retrieve_command):
           print(subline.strip())
           cache_match = pdb_cached_re.match(subline.strip())
           if cache_match:
