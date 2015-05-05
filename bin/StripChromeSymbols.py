@@ -46,7 +46,7 @@ import sys
 import re
 import tempfile
 import shutil
-import subprocess
+#import subprocess
 
 def run_and_look_for_matches(command):
   tempdirs = []
@@ -118,6 +118,13 @@ def check_for_symcache_files(symcache_files):
       return True
   return False
 
+def delete_stripped_pdbs(error, tempdirs):
+  if error:
+    print("Retaining PDBs to allow rerunning xperf command-line.")
+  else:
+    for directory in tempdirs:
+      shutil.rmtree(directory, ignore_errors=True)
+
 def main():
   if len(sys.argv) < 2:
     print("Usage: %s trace.etl" % sys.argv[0])
@@ -183,12 +190,7 @@ def main():
       os.rename(temp_name, local_pdb)
     
     error = check_for_symcache_files(symcache_files)
-    # Delete the stripped PDB files
-    if error:
-      print("Retaining PDBs to allow rerunning xperf command-line.")
-    else:
-      for directory in tempdirs:
-        shutil.rmtree(directory, ignore_errors=True)
+    delete_stripped_pdbs(error, tempdirs)
   else:
     if found_uncached:
       print("No PDBs copied, nothing to do.")
