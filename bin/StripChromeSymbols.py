@@ -48,59 +48,13 @@ import tempfile
 import shutil
 import subprocess
 
-def main():
-  if len(sys.argv) < 2:
-    print("Usage: %s trace.etl" % sys.argv[0])
-    sys.exit(0)
-
-  symbol_path = os.environ.get("_NT_SYMBOL_PATH", "")
-  if symbol_path.count("chromium-browser-symsrv") == 0:
-    print("Chromium symbol server is not in _NT_SYMBOL_PATH. No symbol stripping needed.")
-    sys.exit(0)
-
-  script_dir = os.path.split(sys.argv[0])[0]
-  retrieve_path = os.path.join(script_dir, "RetrieveSymbols.exe")
-  pdbcopy_path = os.path.join(script_dir, "pdbcopy.exe")
-
-  # RetrieveSymbols.exe requires some support files. dbghelp.dll and symsrv.dll
-  # have to be in the same directory as RetrieveSymbols.exe and pdbcopy.exe must
-  # be in the path, so copy them all to the script directory.
-  for third_party in ["pdbcopy.exe", "dbghelp.dll", "symsrv.dll"]:
-    if not os.path.exists(third_party):
-      source = os.path.normpath(os.path.join(script_dir, r"..\third_party", \
-          third_party))
-      dest = os.path.normpath(os.path.join(script_dir, third_party))
-      shutil.copy2(source, dest)
-
-  if not os.path.exists(pdbcopy_path):
-    print("pdbcopy.exe not found. No symbol stripping is possible.")
-    sys.exit(0)
-
-  if not os.path.exists(retrieve_path):
-    print("RetrieveSymbols.exe not found. No symbol retrieval is possible.")
-    sys.exit(0)
-
-  tracename = sys.argv[1]
-  # Each symbol file that we pdbcopy gets copied to a separate directory so
-  # that we can support decoding symbols for multiple chrome versions without
-  # filename collisions.
-  tempdirs = []
-
+def run_and_look_for_matches(command):
+  found_uncached = False
   # Typical output looks like:
   # "[RSDS] PdbSig: {be90dbc6-fe31-4842-9c72-7e2ea88f0adf}; Age: 1; Pdb: C:\b\build\slave\win\build\src\out\Release\syzygy\chrome.dll.pdb"
   pdb_re = re.compile(r'"\[RSDS\] PdbSig: {(.*-.*-.*-.*-.*)}; Age: (.*); Pdb: (.*)"')
   pdb_cached_re = re.compile(r"Found .*file - placed it in (.*)")
-
-  print("Pre-translating chrome symbols from stripped PDBs to avoid 10-15 minute translation times.")
-
-  symcache_files = []
-  # Keep track of the local symbol files so that we can temporarily rename them
-  # to stop xperf from using -- rename them from .pdb to .pdbx
-  local_symbol_files = []
-
-  command = 'xperf -i "%s" -tle -tti -a symcache -dbgid' % tracename
-  print("> %s" % command)
-  found_uncached = False
+  
   #raw_command_output = subprocess.check_output(command)
   #command_output = str(raw_command_output).splitlines()
   # os.popen() is deprecated, but it *works*. Using subprocess leads to
@@ -144,6 +98,59 @@ def main():
             print(copyline.strip())
         else:
           print("Failed to retrieve symbols. Check for RetrieveSymbols.exe and support files.")
+  return found_uncached
+
+
+def main():
+  if len(sys.argv) < 2:
+    print("Usage: %s trace.etl" % sys.argv[0])
+    sys.exit(0)
+
+  symbol_path = os.environ.get("_NT_SYMBOL_PATH", "")
+  if symbol_path.count("chromium-browser-symsrv") == 0:
+    print("Chromium symbol server is not in _NT_SYMBOL_PATH. No symbol stripping needed.")
+    sys.exit(0)
+
+  script_dir = os.path.split(sys.argv[0])[0]
+  retrieve_path = os.path.join(script_dir, "RetrieveSymbols.exe")
+  pdbcopy_path = os.path.join(script_dir, "pdbcopy.exe")
+
+  # RetrieveSymbols.exe requires some support files. dbghelp.dll and symsrv.dll
+  # have to be in the same directory as RetrieveSymbols.exe and pdbcopy.exe must
+  # be in the path, so copy them all to the script directory.
+  for third_party in ["pdbcopy.exe", "dbghelp.dll", "symsrv.dll"]:
+    if not os.path.exists(third_party):
+      source = os.path.normpath(os.path.join(script_dir, r"..\third_party", \
+          third_party))
+      dest = os.path.normpath(os.path.join(script_dir, third_party))
+      shutil.copy2(source, dest)
+
+  if not os.path.exists(pdbcopy_path):
+    print("pdbcopy.exe not found. No symbol stripping is possible.")
+    sys.exit(0)
+
+  if not os.path.exists(retrieve_path):
+    print("RetrieveSymbols.exe not found. No symbol retrieval is possible.")
+    sys.exit(0)
+
+  tracename = sys.argv[1]
+  # Each symbol file that we pdbcopy gets copied to a separate directory so
+  # that we can support decoding symbols for multiple chrome versions without
+  # filename collisions.
+  tempdirs = []
+
+
+  print("Pre-translating chrome symbols from stripped PDBs to avoid 10-15 minute translation times.")
+
+  symcache_files = []
+  # Keep track of the local symbol files so that we can temporarily rename them
+  # to stop xperf from using -- rename them from .pdb to .pdbx
+  local_symbol_files = []
+
+  command = 'xperf -i "%s" -tle -tti -a symcache -dbgid' % tracename
+  print("> %s" % command)
+  found_uncached = run_and_look_for_matches(command)
+
 
   if tempdirs:
     symbol_path = ";".join(tempdirs)
@@ -153,13 +160,16 @@ def main():
       temp_name = local_pdb + "x"
       print("Renaming %s to %s to stop unstripped PDBs from being used." % (local_pdb, temp_name))
       os.rename(local_pdb, temp_name)
+
     gen_command = 'xperf -i "%s" -symbols -tle -tti -a symcache -build' % tracename
     print("> %s" % gen_command)
     for line in os.popen(gen_command).readlines():
       pass # Don't print line
+
     for local_pdb in local_symbol_files:
       temp_name = local_pdb + "x"
       os.rename(temp_name, local_pdb)
+    
     error = False
     for symcache_file in symcache_files:
       if os.path.exists(symcache_file):
