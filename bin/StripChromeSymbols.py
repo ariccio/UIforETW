@@ -90,7 +90,7 @@ def run_and_look_for_matches(command, retrieve_path):
         symcache_files.append(symcache_file)
         pdb_cache_path = None
         retrieve_command = "%s %s %s %s" % (retrieve_path, guid, age, filepart)
-        print(">%s is executing %s" % (os.path.basename(__file__), retrieve_command))
+        print(">%s is executing `%s`" % (os.path.basename(__file__), retrieve_command))
         for subline in os.popen(retrieve_command):
           print(subline.strip())
           cache_match = pdb_cached_re.match(subline.strip())
@@ -180,7 +180,7 @@ def main():
 
   tracename = sys.argv[1]
   command = 'xperf -i "%s" -tle -tti -a symcache -dbgid' % tracename
-  print(">%s is executing %s" % (os.path.basename(__file__), command))
+  print(">%s is executing `%s`" % (os.path.basename(__file__), command))
   (found_uncached, tempdirs, local_symbol_files, symcache_files) = run_and_look_for_matches(command, retrieve_path)
 
   if tempdirs:
@@ -189,7 +189,7 @@ def main():
     os.environ["_NT_SYMBOL_PATH"] = symbol_path
     rename_pdbs(local_symbol_files)
     gen_command = 'xperf -i "%s" -symbols -tle -tti -a symcache -build' % tracename
-    print(">%s is executing %s" % (os.path.basename(__file__),gen_command))
+    print(">%s is executing `%s`" % (os.path.basename(__file__),gen_command))
 
     #what is this loop for???
     for line in os.popen(gen_command).readlines():
