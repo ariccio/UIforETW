@@ -49,6 +49,9 @@ import shutil
 import subprocess
 
 def run_and_look_for_matches(command):
+  tempdirs = []
+  local_symbol_files = []
+  symcache_files = []
   found_uncached = False
   # Typical output looks like:
   # "[RSDS] PdbSig: {be90dbc6-fe31-4842-9c72-7e2ea88f0adf}; Age: 1; Pdb: C:\b\build\slave\win\build\src\out\Release\syzygy\chrome.dll.pdb"
@@ -98,8 +101,22 @@ def run_and_look_for_matches(command):
             print(copyline.strip())
         else:
           print("Failed to retrieve symbols. Check for RetrieveSymbols.exe and support files.")
-  return found_uncached
+  return (found_uncached, tempdirs, local_symbol_files, symcache_files)
 
+def rename_pdbs(local_symbol_files):
+  for local_pdb in local_symbol_files:
+    temp_name = local_pdb + "x"
+    print("Renaming %s to %s to stop unstripped PDBs from being used." % (local_pdb, temp_name))
+    os.rename(local_pdb, temp_name)
+
+def check_for_symcache_files(symcache_files):
+  for symcache_file in symcache_files:
+    if os.path.exists(symcache_file):
+      print("%s generated." % symcache_file)
+    else:
+      print("Error: %s not generated." % symcache_file)
+      return True
+  return False
 
 def main():
   if len(sys.argv) < 2:
@@ -134,49 +151,36 @@ def main():
     sys.exit(0)
 
   tracename = sys.argv[1]
+  print("Pre-translating chrome symbols from stripped PDBs to avoid 10-15 minute translation times.")
+
   # Each symbol file that we pdbcopy gets copied to a separate directory so
   # that we can support decoding symbols for multiple chrome versions without
   # filename collisions.
   tempdirs = []
-
-
-  print("Pre-translating chrome symbols from stripped PDBs to avoid 10-15 minute translation times.")
-
   symcache_files = []
+  
   # Keep track of the local symbol files so that we can temporarily rename them
   # to stop xperf from using -- rename them from .pdb to .pdbx
   local_symbol_files = []
 
   command = 'xperf -i "%s" -tle -tti -a symcache -dbgid' % tracename
   print("> %s" % command)
-  found_uncached = run_and_look_for_matches(command)
-
+  (found_uncached, tempdirs, local_symbol_files, symcache_files) = run_and_look_for_matches(command)
 
   if tempdirs:
     symbol_path = ";".join(tempdirs)
     print("Stripped PDBs are in %s. Converting to symcache files now." % symbol_path)
     os.environ["_NT_SYMBOL_PATH"] = symbol_path
-    for local_pdb in local_symbol_files:
-      temp_name = local_pdb + "x"
-      print("Renaming %s to %s to stop unstripped PDBs from being used." % (local_pdb, temp_name))
-      os.rename(local_pdb, temp_name)
-
+    rename_pdbs(local_symbol_files)
     gen_command = 'xperf -i "%s" -symbols -tle -tti -a symcache -build' % tracename
     print("> %s" % gen_command)
     for line in os.popen(gen_command).readlines():
       pass # Don't print line
-
     for local_pdb in local_symbol_files:
       temp_name = local_pdb + "x"
       os.rename(temp_name, local_pdb)
     
-    error = False
-    for symcache_file in symcache_files:
-      if os.path.exists(symcache_file):
-        print("%s generated." % symcache_file)
-      else:
-        print("Error: %s not generated." % symcache_file)
-        error = True
+    error = check_for_symcache_files(symcache_files)
     # Delete the stripped PDB files
     if error:
       print("Retaining PDBs to allow rerunning xperf command-line.")
