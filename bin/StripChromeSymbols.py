@@ -179,6 +179,10 @@ def main():
   print("Pre-translating chrome symbols from stripped PDBs to avoid 10-15 minute translation times.")
 
   tracename = sys.argv[1]
+  #-tle = tolerate lost events
+  #-tti = tolerate time ivnersions
+  #-a symcache = show image and symbol identification
+  #-dbgid = show symbol identification information
   command = 'xperf -i "%s" -tle -tti -a symcache -dbgid' % tracename
   print(">%s is executing `%s`" % (os.path.basename(__file__), command))
   (found_uncached, tempdirs, local_symbol_files, symcache_files) = run_and_look_for_matches(command, retrieve_path)
@@ -188,6 +192,7 @@ def main():
     print("Stripped PDBs are in %s. Converting to symcache files now." % symbol_path)
     os.environ["_NT_SYMBOL_PATH"] = symbol_path
     rename_pdbs(local_symbol_files)
+    #-build = build the symcache store for this trace
     gen_command = 'xperf -i "%s" -symbols -tle -tti -a symcache -build' % tracename
     print(">%s is executing `%s`" % (os.path.basename(__file__),gen_command))
 
