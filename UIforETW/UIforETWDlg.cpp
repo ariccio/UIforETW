@@ -280,8 +280,7 @@ BOOL CUIforETWDlg::OnInitDialog()
 		}
 	}
 
-	
-	if (!IsWindowsVistaOrGreater())
+	if (IsWindowsXPOrLesser())
 	{
 		AfxMessageBox(L"ETW tracing requires Windows Vista or above.");
 		exit(10);
@@ -314,9 +313,8 @@ BOOL CUIforETWDlg::OnInitDialog()
 	// The installers are available as part of etwpackage.zip on https://github.com/google/UIforETW/releases
 	if (!PathFileExists(GetXperfPath().c_str()))
 	{
-		
 		// Windows 7 users need to have WPT 8.1 installed.
-		if (!IsWindows8OrGreater())
+		if (IsWindowsSevenOrLesser())
 		{
 			const std::wstring installPath81 = GetExeDir() + L"..\\third_party\\wpt81\\WPTx64-x86_en-us.msi";
 			if (PathFileExists(installPath81.c_str()))
@@ -352,7 +350,7 @@ BOOL CUIforETWDlg::OnInitDialog()
 	}
 	if (!PathFileExists(GetXperfPath().c_str()))
 	{
-		if (!IsWindows8OrGreater())
+		if (IsWindowsSevenOrLesser())
 		{
 			// WPT 10 (at least the 10240 version) doesn't record image ID information
 			// on Windows 7 and below, so the Windows 8.1 version of WPT is needed.
@@ -415,7 +413,7 @@ BOOL CUIforETWDlg::OnInitDialog()
 	SetIcon(m_hIcon, TRUE);			// Set big icon
 	SetIcon(m_hIcon, FALSE);		// Set small icon
 
-	if (!IsWindows8OrGreater())
+	if (IsWindowsSevenOrLesser())
 	{
 		bCompress_ = false; // ETW trace compression requires Windows 8.0
 		SmartEnableWindow(btCompress_.m_hWnd, false);
@@ -548,7 +546,6 @@ void CUIforETWDlg::RegisterProviders()
 		dllSource += L"ETWProviders64.dll";
 	else
 		dllSource += L"ETWProviders.dll";
-#pragma warning(suppress:4996)
 	const std::wstring temp = GetEnvironmentVariableString(L"temp");
 	if (temp.empty())
 		return;
@@ -710,7 +707,6 @@ std::wstring CUIforETWDlg::GenerateResultFilename() const
 	_strdate_s(date);
 	int hour, min, sec;
 	int year, month, day;
-
 	const std::wstring username = GetEnvironmentVariableString(L"USERNAME");
 	wchar_t fileName[MAX_PATH];
 	// Hilarious /analyze warning on this line from bug in _strtime_s annotation!
@@ -781,7 +777,6 @@ void CUIforETWDlg::OnBnClickedStarttracing()
 		kernelFile = L" -buffering";
 	std::wstring kernelArgs = L" -start " + GetKernelLogger() + L" -on" + kernelProviders + kernelStackWalk + kernelBuffers + kernelFile;
 
-	//WindowsVersion winver = GetWindowsVersion();
 	// The Windows 10 ReleaseUserCrit, ExclusiveUserCrit, and SharedUserCrit events generate
 	// 75% of the events for this provider - 33,000/s in one test. They account for
 	// more than 75% of the space used, according to System Configuration-> Trace
@@ -797,9 +792,7 @@ void CUIforETWDlg::OnBnClickedStarttracing()
 	// clear that it actually helps.
 	const uint64_t kCritFlags = 0x0200000010000000;
 	std::wstring userProviders = stringPrintf(L"Microsoft-Windows-Win32k:0x%llx", ~kCritFlags);
-	
-	
-	if (!IsWindows7OrGreater())
+	if (IsWindowsVistaOrLesser())
 		userProviders = L"Microsoft-Windows-LUA"; // Because Microsoft-Windows-Win32k doesn't work on Vista.
 	userProviders += L"+Multi-MAIN+Multi-FrameRate+Multi-Input+Multi-Worker";
 
@@ -1597,8 +1590,7 @@ void CUIforETWDlg::OnContextMenu(CWnd* pWnd, CPoint point)
 				pContextMenu->EnableMenuItem(id, MF_BYCOMMAND | MF_GRAYED);
 		}
 
-		
-		if (IsWindows8OrGreater())
+		if (IsWindowsSevenOrLesser())
 		{
 			// Disable ETW trace compress options on Windows 7 and below
 			// since they don't work there.

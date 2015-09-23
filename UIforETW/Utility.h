@@ -21,8 +21,6 @@ limitations under the License.
 #include <chrono>
 
 std::vector<std::wstring> split(const std::wstring& s, char c);
-
-
 // If fullPaths == true then the names returned will be full Paths to the files. Otherwise
 // they will just be the file portions.
 std::vector<std::wstring> GetFileList(const std::wstring& pattern, bool fullPaths = false);
@@ -45,7 +43,6 @@ std::wstring AnsiToUnicode(const std::string& text);
 //MultiByteToWideChar: https://msdn.microsoft.com/en-us/library/windows/desktop/dd319072.aspx
 //
 //Remarks:
-//
 //As mentioned in the caution above,
 //the output buffer can easily be overrun
 //if this function is not first called with cchWideChar set to 0
@@ -57,9 +54,7 @@ int RequiredNumberOfWideChars(const std::string& text);
 std::wstring stringPrintf(_Printf_format_string_ PCWSTR const pFormat, ...);
 // Call OutputDebugString with a format string and some printf-style arguments.
 void debugPrintf(_Printf_format_string_ PCWSTR const pFormat, ...);
-
 void outputLastError(DWORD lastErr = ::GetLastError());
-
 void debugLastError(DWORD lastErr = ::GetLastError());
 
 // This function checks to see whether a control has focus before
@@ -98,8 +93,10 @@ std::string GetEnvironmentVariableString(_In_z_ PCSTR variable);
 
 bool Is64BitWindows();
 bool Is64BitBuild();
-
 bool IsWindowsTenOrGreater();
+bool IsWindowsXPOrLesser();
+bool IsWindowsSevenOrLesser();
+bool IsWindowsVistaOrLesser();
 
 std::wstring FindPython(); // Returns a full path to python.exe or nothing.
 
@@ -129,9 +126,9 @@ public:
 	}
 	double ElapsedSeconds() const
 	{
-		LARGE_INTEGER stop = {0};
+		LARGE_INTEGER stop = {};
 		ATLVERIFY(QueryPerformanceCounter(&stop));
-		LARGE_INTEGER frequency = {0};
+		LARGE_INTEGER frequency = {};
 		ATLVERIFY(QueryPerformanceFrequency(&frequency));
 
 		return (stop.QuadPart - start_.QuadPart) / float(frequency.QuadPart);
@@ -146,13 +143,5 @@ void SetCurrentThreadName(PCSTR threadName);
 
 void CopyStartupProfiles(const std::wstring& exeDir, bool force);
 
-void CloseFindHandle(_Pre_valid_ _Post_ptr_invalid_ HANDLE handle, PCWSTR directory);
+void CloseValidHandle(_In_ _Pre_valid_ _Post_ptr_invalid_ HANDLE handle);
 
-void CloseValidHandle( _Pre_valid_ _Post_ptr_invalid_ HANDLE handle );
-
-void CloseRegKey( _Pre_valid_ _Post_ptr_invalid_ HKEY key, PCWSTR const keyName );
-
-_Success_(return)
-bool OpenRegKey( _Out_ HKEY* key, _In_ HKEY root, PCWSTR const subkey );
-
-void ClipboardClose();

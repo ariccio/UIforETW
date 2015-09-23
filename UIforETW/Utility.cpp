@@ -19,6 +19,276 @@ limitations under the License.
 #include <fstream>
 #include <direct.h>
 
+
+namespace {
+PCWSTR const WPAStartupFileName = L"\\Startup.wpaProfile";
+
+_Success_(return)
+bool AllocGlobalMemoryForString(const std::wstring& text, _Out_ _Post_valid_ HGLOBAL* const hmem)
+{
+	const size_t length = (text.size() + 1) * sizeof(text[0]);
+	const HANDLE mem = ::GlobalAlloc(GMEM_MOVEABLE, length);
+	if (!mem)
+	{
+		outputPrintf(L"Couldn't allocate memory to set clipboard text!\n");
+		outputLastError();
+		return false;
+	}
+	(*hmem) = mem;
+	return true;
+}
+
+void FreeGlobalMemory(_Frees_ptr_opt_ const HGLOBAL hmem)
+{
+		//If [GlobalFree] succeeds, the return value is NULL.
+		const HGLOBAL freeRes = ::GlobalFree(hmem);
+		if (freeRes != NULL)
+			std::terminate();//Logic bug!
+}
+
+_Success_(return)
+bool LockGlobalMemory(_In_ _Pre_valid_ const HGLOBAL hmem, _Outptr_ PVOID* const ptrMem)
+{
+	void* const ptr = ::GlobalLock(hmem);
+	if (ptr == NULL)
+	{
+		outputPrintf(L"Failed to lock memory for clipboard text!\n");
+		outputLastError();
+		return false;
+	}
+	(*ptrMem) = ptr;
+	return true;
+}
+
+void UnlockGlobalMemory(_In_ const HGLOBAL hmem)
+{
+	const BOOL unlockRes = ::GlobalUnlock(hmem);
+	if (!unlockRes)
+	{
+		const DWORD lastErr = ::GetLastError();
+		if (lastErr != NO_ERROR)
+			std::terminate( );//Logic bug!
+	}
+}
+
+_Success_(return)
+bool SizeGlobalMemory(_In_ _Pre_valid_ const HGLOBAL hmem, _Out_ size_t* const sizeBytes)
+{
+	const size_t bytes = ::GlobalSize(hmem);
+	if (bytes == 0)
+	{
+		outputPrintf(L"Failed to get size of globally-allocated memory!\n");
+		outputLastError();
+		return false;
+	}
+	(*sizeBytes) = bytes;
+	return true;
+}
+
+_Success_(return)
+bool ClipboardGetUnicode(_Out_ _Post_valid_ HANDLE* const hClipboard)
+{
+	const HANDLE hClip = ::GetClipboardData(CF_UNICODETEXT);
+	if (hClip == NULL)
+	{
+		outputPrintf(L"Failed to get clipboard data!\n");
+		outputLastError();
+		return false;
+	}
+	(*hClipboard) = hClip;
+	return true;
+}
+
+_Success_(return)
+bool ClipboardSetUnicode(_In_ const HGLOBAL hmem)
+{
+	const HANDLE dataHandle = ::SetClipboardData(CF_UNICODETEXT, hmem);
+	if (dataHandle == NULL)
+	{
+		outputPrintf(L"Failed to set clipboard data!\n");
+		outputLastError();
+		return false;
+	}
+	return true;
+}
+
+void closeClipboard()
+{
+	const BOOL closeResult = ::CloseClipboard( );
+	if (closeResult)
+		return;
+	debugPrintf(L"Failed to close the clipboard!\n");
+	debugLastError( );
+}
+
+bool openClipboard()
+{
+	const BOOL openClip = ::OpenClipboard(::GetDesktopWindow());
+	if (!openClip)
+	{
+		outputPrintf(L"Failed to open clipboard!\n");
+		debugLastError();
+		return false;
+	}
+	return true;
+}
+
+bool emptyClipboard()
+{
+	const BOOL emptyClip = ::EmptyClipboard();
+	if (!emptyClip)
+	{
+		outputPrintf(L"Failed to empty clipboard!\n");
+		debugLastError();
+		return false;
+	}
+	return true;
+}
+
+_Success_(return)
+bool OpenRegKey( _Out_ HKEY* const key, _In_ const HKEY root, PCWSTR const subkey )
+{
+	const LONG openResult = ::RegOpenKeyExW(root, subkey, 0, KEY_ALL_ACCESS, key);
+	if (openResult == ERROR_SUCCESS)
+		return true;
+	outputPrintf(L"Failed to open registry key `%s`.\n", subkey);
+	debugLastError();
+	return false;
+}
+
+void CloseRegKey(_In_ _Pre_valid_ _Post_ptr_invalid_ const HKEY key, PCWSTR const keyName)
+{
+	const LONG closeKey = ::RegCloseKey(key);
+	if (closeKey == ERROR_SUCCESS)
+		return;
+	outputPrintf(L"Failed to close registry key `%s`.\n", keyName);
+	debugLastError();
+}
+
+void CloseFindHandle(_In_ _Pre_valid_ _Post_ptr_invalid_ const HANDLE handle, PCWSTR const directory)
+{
+	const BOOL findClose = ::FindClose(handle);
+	if (findClose)
+		return;
+	outputPrintf(L"FindClose (for directory: `%s`) failed.\n", directory);
+	debugLastError();
+	std::terminate();
+}
+
+std::wstring GetDocumentsFolderPath()
+{
+	//must CoTaskMemFree when done!
+	PWSTR docsPathTemp = NULL;
+	const HRESULT docsPathResult = ::SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_NO_ALIAS, NULL, &docsPathTemp);
+	if (FAILED(docsPathResult))
+	{
+		debugPrintf(L"SHGetKnownFolderPath (for Documents) failed to retrieve the path.\n");
+		std::terminate();
+	}
+	std::wstring docsPath(docsPathTemp);
+	CoTaskMemFree(docsPathTemp);
+	return docsPath;
+}
+
+void copyWPAProfileToDocuments(const bool force)
+{
+	// First copy the WPA 8.1 startup.wpaProfile file
+	std::wstring docsPath(GetDocumentsFolderPath());
+
+	if (force)
+		outputPrintf(L"\n");
+
+	if (docsPath.empty())
+	{
+		outputPrintf( L"Failed to copy WPA profile to documents. See debugger output for details.\n" );
+		return;
+	}
+
+	const std::wstring source = docsPath + WPAStartupFileName;
+	const std::wstring destDir = docsPath + std::wstring(L"\\WPA Files");
+	const std::wstring dest = destDir + WPAStartupFileName;
+	const BOOL destinationExists = ::PathFileExistsW(dest.c_str());
+	if (force || !destinationExists)
+	{
+		const BOOL makeDirResult = ::CreateDirectoryW(destDir.c_str(), NULL);
+		if (makeDirResult == 0)
+		{
+			const DWORD lastErr = ::GetLastError();
+
+			//ERROR_ALREADY_EXISTS is reasonable.
+			if (lastErr != ERROR_ALREADY_EXISTS)
+			{
+				outputPrintf(L"Something went wrong when copying the WPA profile to the documents folder.\n");
+				outputLastError(lastErr);
+				return;
+			}
+		}
+		const BOOL copyResult = ::CopyFileW(source.c_str(), dest.c_str(), FALSE);
+		if (copyResult)
+		{
+			//why does the message depend on forced copy?
+			if (force)
+				outputPrintf(L"Copied Startup.wpaProfile to the WPA Files directory.\n");
+			return;
+		}
+		if (force)
+		{
+			outputPrintf(L"Failed to copy Startup.wpaProfile to the WPA Files directory.\n");
+			outputLastError();
+			return;
+		}
+		debugPrintf(L"Failed to copy Startup.wpaProfile to the WPA Files directory.\n");
+		debugLastError();
+	}
+}
+
+void copyWPAProfileToLocalAppData(const std::wstring& exeDir, const bool force)
+{
+	PCWSTR const localAppDataEnvVar = L"localappdata";
+	// Then copy the WPA 10 startup.wpaProfile file
+	const std::wstring localAppData = GetEnvironmentVariableString(localAppDataEnvVar);
+	if (localAppData.empty())
+	{
+		outputPrintf(L"the `%s` environment variable didn't contain a valid path. Failed to copy WPA 10 profile.\n", localAppDataEnvVar);
+		return;
+	}
+	std::wstring source = exeDir + L"\\startup10.wpaProfile";
+	std::wstring destDir = std::wstring(localAppData) + L"\\Windows Performance Analyzer";
+	std::wstring dest = destDir + WPAStartupFileName;
+	if (force || !::PathFileExistsW(dest.c_str()))
+	{
+
+		const BOOL makeDirResult = ::CreateDirectoryW(destDir.c_str(), NULL);
+		if (makeDirResult == 0)
+		{
+			const DWORD lastErr = ::GetLastError();
+
+			//ERROR_ALREADY_EXISTS is reasonable.
+			if (lastErr != ERROR_ALREADY_EXISTS)
+			{
+				outputPrintf(L"Something went wrong when copying the WPA profile to the AppData/Local folder.\n");
+				outputLastError(lastErr);
+				return;
+			}
+		}
+
+		if (::CopyFileW(source.c_str(), dest.c_str(), FALSE))
+		{
+			if (force)
+				outputPrintf(L"%s", L"Copied Startup.10wpaProfile to %localappdata%\\Windows Performance Analyzer\n");
+			return;
+		}
+		if (force)
+		{
+			outputPrintf(L"%s", L"Failed to copy Startup.10wpaProfile to %localappdata%\\Windows Performance Analyzer\n");
+			outputLastError();
+		}
+	}
+
+}
+
+}
+
 void outputLastError(const DWORD lastErr)
 {
 	const DWORD errMsgSize = 1024u;
@@ -47,7 +317,6 @@ void debugLastError(const DWORD lastErr)
 	debugPrintf(L"UIforETW encountered an error: %s\r\n", errBuff);
 }
 
-
 std::vector<std::wstring> split(const std::wstring& s, const char c)
 {
 	std::wstring::size_type i = 0;
@@ -72,10 +341,8 @@ std::vector<std::wstring> GetFileList(const std::wstring& pattern, const bool fu
 {
 	const std::wstring directory = (fullPaths ? GetDirPart( pattern ) : L"");
 
-
 	//may not pass an empty string to FindFirstFileEx
 	UIETWASSERT(pattern.length() > 0);
-
 
 	//string passed to FindFirstFileEx must not end in a backslash
 	UIETWASSERT(pattern.back() != L'\\');
@@ -87,11 +354,16 @@ std::vector<std::wstring> GetFileList(const std::wstring& pattern, const bool fu
 	std::vector<std::wstring> result;
 	if (hFindFile == INVALID_HANDLE_VALUE)
 	{
-		outputPrintf(L"failed to get file list for directory: `%s`\n", pattern.c_str());
-		debugLastError();
+		//If there are NO matching files, then FindFirstFileExW returns
+		//INVALID_HANDLE_VALUE and the last error is ERROR_FILE_NOT_FOUND.
+		const DWORD lastErr = ::GetLastError();
+		if (lastErr != ERROR_FILE_NOT_FOUND)
+		{
+			outputPrintf(L"failed to get file list for directory: `%s`\n", pattern.c_str());
+			debugLastError(lastErr);
+		}
 		return result;
 	}
-	
 	do
 	{
 		result.emplace_back(directory + findData.cFileName);
@@ -112,6 +384,9 @@ std::vector<std::wstring> GetFileList(const std::wstring& pattern, const bool fu
 // an embedded NUL then the resulting string will be truncated.
 std::wstring LoadFileAsText(const std::wstring& fileName)
 {
+	if (!::PathFileExistsW(fileName.c_str()))
+		return L"";
+
 	std::ifstream f;
 	f.open(fileName, std::ios_base::binary);
 	if (!f)
@@ -143,7 +418,6 @@ std::wstring LoadFileAsText(const std::wstring& fileName)
 	data[length] = 0;
 	data[length+1] = 0;
 
-	
 	const wchar_t bom = 0xFEFF;
 	UIETWASSERT(data.size( ) > sizeof(bom));
 	if (memcmp(&bom, &data[0], sizeof(bom)) == 0)
@@ -185,7 +459,6 @@ std::wstring ConvertToCRLF(const std::wstring& input)
 		if (c != '\r')
 			result += c;
 	}
-
 	return result;
 }
 
@@ -193,9 +466,7 @@ void SetRegistryDWORD(const HKEY root, const std::wstring& subkey, const std::ws
 {
 	HKEY key;
 	if (!OpenRegKey(&key, root, subkey.c_str()))
-	{
 		return;
-	}
 
 	const LONG setResult = ::RegSetValueExW(key, valueName.c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
 	if (setResult != ERROR_SUCCESS)
@@ -204,7 +475,6 @@ void SetRegistryDWORD(const HKEY root, const std::wstring& subkey, const std::ws
 		debugLastError();
 		return;
 	}
-
 	CloseRegKey(key, subkey.c_str());
 }
 
@@ -212,12 +482,9 @@ void CreateRegistryKey(const HKEY root, const std::wstring& subkey, const std::w
 {
 	HKEY key;
 	if (!OpenRegKey(&key, root, subkey.c_str()))
-	{
 		return;
-	}
 
 	HKEY resultKey;
-
 	//TODO: RegCreateKey is depreciated.
 	const LONG createResult = ::RegCreateKeyW(key, newKey.c_str(), &resultKey);
 	if (createResult != ERROR_SUCCESS)
@@ -230,14 +497,12 @@ void CreateRegistryKey(const HKEY root, const std::wstring& subkey, const std::w
 		CloseRegKey(resultKey, newKey.c_str());
 	}
 	CloseRegKey(key, subkey.c_str());
-
 }
 
 std::wstring GetEditControlText(const HWND hEdit)
 {
 	const int length = ::GetWindowTextLengthW(hEdit);
 	std::vector<wchar_t> buffer(length + 1);
-	
 	
 	//GetWindowText https://msdn.microsoft.com/en-us/library/windows/desktop/ms633520.aspx
 	//If [GetWindowTextW] succeeds, the return value is the length,
@@ -402,7 +667,6 @@ std::wstring GetFilePart(const std::wstring& path)
 	const size_t lastSlash = path.find_last_of( L'\\' );
 	if (lastSlash != std::wstring::npos)
 		return path.substr(lastSlash);
-	
 	// If there's no slash then the file part is the entire string.
 	return path;
 }
@@ -413,7 +677,6 @@ std::wstring GetFileExt(const std::wstring& path)
 	const size_t lastPeriod = filePart.find_last_of( L'.' );
 	if (lastPeriod != std::wstring::npos)
 		return filePart.substr(lastPeriod);
-
 	// If there's no period then there's no extension.
 	return L"";
 }
@@ -427,7 +690,6 @@ std::wstring GetDirPart(const std::wstring& path)
 		UIETWASSERT(path.at( lastSlash ) != path.back());
 		return path.substr(0, lastSlash+1);
 	}
-
 	// If there's no slash then there is no directory.
 	return L"";
 }
@@ -438,10 +700,7 @@ std::wstring CrackFilePart(const std::wstring& path)
 	const std::wstring extension = GetFileExt(filePart);
 	UIETWASSERT(filePart.size() >= extension.size());
 	if (!extension.empty())
-	{
 		return filePart.substr(0, filePart.size() - extension.size());
-	}
-
 	return filePart;
 }
 
@@ -491,132 +750,84 @@ int DeleteFiles(const HWND hwnd, const std::vector<std::wstring>& paths)
 
 void SetClipboardText(const std::wstring& text)
 {
-	const BOOL openClip = ::OpenClipboard(::GetDesktopWindow());
-	if (!openClip)
+	if (!openClipboard())
+		return;
+
+	if (!emptyClipboard())
 	{
-		outputPrintf(L"Failed to open clipboard!\n");
-		debugLastError();
+		closeClipboard();
 		return;
 	}
 
-	const BOOL emptyClip = ::EmptyClipboard();
-	if (!emptyClip)
+	HANDLE hmem_temp = FALSE;
+	if (!AllocGlobalMemoryForString(text, &hmem_temp))
 	{
-		outputPrintf(L"Failed to open clipboard!\n");
-		debugLastError();
+		closeClipboard();
+		return;
+	}
+	const HANDLE& hmem = hmem_temp;
+
+	void* ptr_temp = nullptr;
+	if (!LockGlobalMemory(hmem, &ptr_temp))
+	{
+		FreeGlobalMemory(hmem);
+		closeClipboard();
 		return;
 	}
 
-	const size_t length = (text.size() + 1) * sizeof(text[0]);
-	const HANDLE hmem = ::GlobalAlloc(GMEM_MOVEABLE, length);
-	if (!hmem)
+	void* const ptr = ptr_temp;
+
+	wcscpy_s(static_cast<wchar_t*>(ptr), (text.size() + 1), text.c_str());
+
+	UnlockGlobalMemory(hmem);
+
+	if (!ClipboardSetUnicode(hmem))
 	{
-		outputPrintf(L"Couldn't allocate memory to set clipboard text!\n");
-		outputLastError();
-		ClipboardClose();
+		FreeGlobalMemory(hmem);
+		closeClipboard();
 		return;
 	}
-	void* const ptr = ::GlobalLock(hmem);
-	if (ptr == NULL)
-	{
-		outputPrintf(L"Failed to lock memory for clipboard text!\n");
-		outputLastError();
-
-		//If [GlobalFree] succeeds, the return value is NULL.
-		const HGLOBAL freeRes = ::GlobalFree(hmem);
-		if (freeRes != NULL)
-			std::terminate();//Logic bug!
-		return;
-	}
-
-	memcpy_s(ptr, length, text.c_str(), length);
-	const BOOL unlockRes = ::GlobalUnlock(hmem);
-	if (!unlockRes)
-	{
-		const DWORD lastErr = ::GetLastError();
-		if (lastErr != NO_ERROR)
-			std::terminate( );//Logic bug!
-
-	}
-
-	const HANDLE dataHandle = ::SetClipboardData(CF_UNICODETEXT, hmem);
-	if (dataHandle == NULL)
-	{
-		outputPrintf(L"Failed to set clipboard data!\n");
-		outputLastError();
-		//If [GlobalFree] succeeds, the return value is NULL.
-		const HGLOBAL freeRes = ::GlobalFree(hmem);
-		if (freeRes != NULL)
-			std::terminate();//Logic bug!
-		ClipboardClose();
-		return;
-	}
-
-	ClipboardClose();
+	closeClipboard();
 }
 
 std::wstring GetClipboardText()
 {
 	std::wstring result;
-	const BOOL openClip = ::OpenClipboard(::GetDesktopWindow());
-	if (!openClip)
+	if (!openClipboard())
+		return result;
+
+	HANDLE hClip_temp = NULL;
+	if (!ClipboardGetUnicode(&hClip_temp))
 	{
-		outputPrintf(L"Failed to open clipboard!\n");
-		debugLastError();
+		closeClipboard();
 		return result;
 	}
 
+	const HANDLE hClip = hClip_temp;
 
-	const HANDLE hClip = ::GetClipboardData(CF_UNICODETEXT);
-	if (hClip == NULL)
+	void* ptr = nullptr;
+	if (!LockGlobalMemory(hClip, &ptr))
 	{
-		outputPrintf(L"Failed to get clipboard data!\n");
-		outputLastError();
-		ClipboardClose();
+		closeClipboard();
 		return result;
 	}
-
-	const void* const ptr = ::GlobalLock(hClip);
-	if (ptr == NULL)
-	{
-		outputPrintf(L"Failed to lock clipboard!\n");
-		outputLastError();
-		ClipboardClose();
-		return result;
-	}
-
 
 	PCWSTR const text = static_cast<PCWSTR>(ptr);
-	const size_t bytes = ::GlobalSize(hClip);
-	if (bytes == 0)
-	{
-		outputPrintf(L"Failed to get size of string!\n");
-		outputLastError();
-		const BOOL unlockRes = ::GlobalUnlock(hClip);
-		if (!unlockRes)
-		{
-			const DWORD lastErr = ::GetLastError();
-			if (lastErr != NO_ERROR)
-				std::terminate( );//Logic bug!
 
-		}
-		ClipboardClose();
+	size_t bytes_temp = 0u;
+	if (!SizeGlobalMemory(hClip, &bytes_temp))
+	{
+		UnlockGlobalMemory(hClip);
+		closeClipboard();
 		return result;
 	}
+
+	const size_t bytes = bytes_temp;
 
 	result.insert(result.begin(), text, text + bytes / sizeof(wchar_t));
 
-	const BOOL unlockRes = ::GlobalUnlock(hClip);
-	if (!unlockRes)
-	{
-		const DWORD lastErr = ::GetLastError();
-		if (lastErr != NO_ERROR)
-			std::terminate( );//Logic bug!
-
-	}
-
-	ClipboardClose();
-
+	UnlockGlobalMemory(hClip);
+	closeClipboard();
 	return result;
 }
 
@@ -650,12 +861,28 @@ bool Is64BitWindows()
 
 bool Is64BitBuild()
 {
+	//when MSVC gets constexpr, this is a perfect candidate.
 	return sizeof(void*) == 8;
 }
 
 bool IsWindowsTenOrGreater()
 {
 	return IsWindowsVersionOrGreater(10, 0, 0);
+}
+
+bool IsWindowsXPOrLesser()
+{
+	return !IsWindowsVistaOrGreater();
+}
+
+bool IsWindowsSevenOrLesser()
+{
+	return !IsWindows8OrGreater();
+}
+
+bool IsWindowsVistaOrLesser()
+{
+	return !IsWindows7OrGreater();
 }
 
 std::wstring GetEnvironmentVariableString(_In_z_ PCWSTR const variable)
@@ -678,7 +905,6 @@ std::string GetEnvironmentVariableString(_In_z_ PCSTR const variable)
 	if (result == 0)
 		return buffer;
 	return "";
-
 }
 
 std::wstring FindPython()
@@ -690,9 +916,7 @@ std::wstring FindPython()
 	//As a workaround for issue #13, we'll use that version of Python.
 	//See the issue: https://github.com/google/UIforETW/issues/13
 	if ( !pytwoseven.empty() )
-	{
 		return pytwoseven;
-	}
 
 	const std::wstring path = GetEnvironmentVariableString(L"path");
 	if (path.empty())
@@ -710,12 +934,9 @@ std::wstring FindPython()
 		{
 			const std::wstring pythonPath = part + exeName;
 			if (::PathFileExistsW(pythonPath.c_str()))
-			{
 				return pythonPath;
-			}
 		}
 	}
-
 	// No python found.
 	return L"";
 }
@@ -806,112 +1027,20 @@ void SetCurrentThreadName(PCSTR const threadName)
 
 void CopyStartupProfiles(const std::wstring& exeDir, const bool force)
 {
-	PCWSTR const fileName = L"\\Startup.wpaProfile";
 
-	// First copy the WPA 8.1 startup.wpaProfile file
-	wchar_t documents[MAX_PATH] = {0};
-	const BOOL getMyDocsResult = ::SHGetSpecialFolderPathW(NULL, documents, CSIDL_MYDOCUMENTS, TRUE);
-	UIETWASSERT(getMyDocsResult);
-	if (force)
-		outputPrintf(L"\n");
-	if (getMyDocsResult)
-	{
-		const std::wstring source = exeDir + fileName;
-		const std::wstring destDir = documents + std::wstring(L"\\WPA Files");
-		const std::wstring dest = destDir + fileName;
-		if (force || !::PathFileExistsW(dest.c_str()))
-		{
-			(void)_wmkdir(destDir.c_str());
-			if (::CopyFileW(source.c_str(), dest.c_str(), FALSE))
-			{
-				if (force)
-					outputPrintf(L"Copied Startup.wpaProfile to the WPA Files directory.\n");
-			}
-			else
-			{
-				if (force)
-					outputPrintf(L"Failed to copy Startup.wpaProfile to the WPA Files directory.\n");
-			}
-		}
-	}
+	// WPA 8.1 stores startup.wpaProfile file in Documents/WPA Files
+	copyWPAProfileToDocuments(force);
 
-	// Then copy the WPA 10 startup.wpaProfile file
-	const std::wstring localAppData = GetEnvironmentVariableString(L"localappdata");
-	if (!localAppData.empty())
-	{
-		std::wstring source = exeDir + L"\\startup10.wpaProfile";
-		std::wstring destDir = std::wstring(localAppData) + L"\\Windows Performance Analyzer";
-		std::wstring dest = destDir + fileName;
-		if (force || !::PathFileExistsW(dest.c_str()))
-		{
-			(void)_wmkdir(destDir.c_str());
-			if (::CopyFileW(source.c_str(), dest.c_str(), FALSE))
-			{
-				if (force)
-					outputPrintf(L"%s", L"Copied Startup.10wpaProfile to %localappdata%\\Windows Performance Analyzer\n");
-			}
-			else
-			{
-				if (force)
-					outputPrintf(L"%s", L"Failed to copy Startup.10wpaProfile to %localappdata%\\Windows Performance Analyzer\n");
-			}
-		}
-	}
+	copyWPAProfileToLocalAppData(exeDir, force);
 }
 
-_Success_(return)
-bool OpenRegKey( _Out_ HKEY* const key, _In_ const HKEY root, PCWSTR const subkey )
-{
-	const LONG openResult = ::RegOpenKeyExW(root, subkey, 0, KEY_ALL_ACCESS, key);
-	if (openResult != ERROR_SUCCESS)
-	{
-		outputPrintf(L"Failed to open registry key `%s`.\n", subkey);
-		debugLastError();
-		return false;
-	}
-	return true;
-}
 
-void CloseFindHandle(_Pre_valid_ _Post_ptr_invalid_ const HANDLE handle, PCWSTR const directory)
-{
-	const BOOL findClose = ::FindClose(handle);
-	if (findClose == 0)
-	{
-		outputPrintf(L"FindClose (for directory: `%s`) failed.\n", directory);
-		debugLastError();
-		std::terminate();
-	}
-}
 
-void CloseValidHandle(_Pre_valid_ _Post_ptr_invalid_ const HANDLE handle)
+void CloseValidHandle(_In_ _Pre_valid_ _Post_ptr_invalid_ const HANDLE handle)
 {
 	const BOOL handleClosed = ::CloseHandle(handle);
 	if (handleClosed == 0)
-	{
-		std::terminate( );
-	}
-
+		std::terminate();//Logic bug!
 }
 
-void CloseRegKey(_Pre_valid_ _Post_ptr_invalid_ const HKEY key, PCWSTR const keyName)
-{
-	const LONG closeKey = ::RegCloseKey(key);
-	if (closeKey != ERROR_SUCCESS)
-	{
-		outputPrintf(L"Failed to close registry key `%s`.\n", keyName);
-		debugLastError();
-		return;
-	}
-
-}
-
-void ClipboardClose()
-{
-	const BOOL closeResult = ::CloseClipboard( );
-	if (!closeResult)
-	{
-		debugPrintf(L"Failed to close the clipboard!\n");
-		debugLastError( );
-	}
-}
 
