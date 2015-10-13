@@ -33,7 +33,8 @@ https://codereview.chromium.org/1176243016
 */
 
 // Copied from Chrome's trace_event_etw_export_win.cc. This file can be found by
-// searching for "f:trace_event_etw_export_win.cc" in https://code.google.com/p/chromium/codesearch#/.
+// searching for "f:trace_event_etw_export_win.cc" or kFilteredEventGroupNames
+// in https://code.google.com/p/chromium/codesearch#/.
 const PCWSTR filtered_event_group_names[] =
 {
 	L"benchmark",                                       // 0x1
@@ -50,6 +51,7 @@ const PCWSTR filtered_event_group_names[] =
 	L"disabled-by-default-cc.debug",                    // 0x800
 	L"disabled-by-default-cc.debug.picture",            // 0x1000
 	L"disabled-by-default-toplevel.flow",               // 0x2000
+	L"startup",                                         // 0x4000
 };
 
 // 1ULL << 61 and 1ULL << 62 are special values that indicate to Chrome to
@@ -64,10 +66,11 @@ uint64_t disabled_other_events_keyword_bit = 1ULL << 62;
 
 IMPLEMENT_DYNAMIC(CSettings, CDialogEx)
 
-CSettings::CSettings(CWnd* pParent /*=NULL*/, const std::wstring& exeDir, const std::wstring& wptDir)
+CSettings::CSettings(CWnd* pParent /*=NULL*/, const std::wstring& exeDir, const std::wstring& wptDir, const std::wstring& wpt10Dir)
 	: CDialogEx(CSettings::IDD, pParent)
 	, exeDir_(exeDir)
 	, wptDir_(wptDir)
+	, wpt10Dir_(wpt10Dir)
 {
 
 }
@@ -244,24 +247,33 @@ void CSettings::OnBnClickedCopysymboldlls()
 
 	bool bIsWin64 = Is64BitWindows();
 
-	bool failed = false;
-	std::wstring third_party = exeDir_ + L"..\\third_party\\";
-	for (size_t i = 0; i < ARRAYSIZE(fileNames); ++i)
+	const std::wstring third_party = exeDir_ + L"..\\third_party\\";
+	std::vector<std::wstring> wptDirs;
+	wptDirs.push_back(wptDir_);
+	if (wpt10Dir_ != wptDir_)
+		wptDirs.push_back(wpt10Dir_);
+	// Perform the operation twice, potentially, for WPT 8.1 and WPT 10
+	for (auto& wptDir : wptDirs)
 	{
-		std::wstring source = third_party + fileNames[i];
-		if (bIsWin64)
-			source = third_party + L"x64\\" + fileNames[i];
+		bool failed = false;
+		for (size_t i = 0; i < ARRAYSIZE(fileNames); ++i)
+		{
+			std::wstring source = third_party + fileNames[i];
+			if (bIsWin64)
+				source = third_party + L"x64\\" + fileNames[i];
 
-		std::wstring dest = wptDir_ + fileNames[i];
-		if (!CopyFile(source.c_str(), dest.c_str(), FALSE))
-			failed = true;
+			std::wstring dest = wptDir + fileNames[i];
+			if (!CopyFile(source.c_str(), dest.c_str(), FALSE))
+				failed = true;
+		}
+		std::wstring message;
+		if (failed)
+			message = stringPrintf(L"Failed to copy dbghelp.dll and symsrv.dll to %s. Is WPA running?", wptDir.c_str());
+		else
+			message = stringPrintf(L"Copied dbghelp.dll and symsrv.dll to %s. If this doesn't help "
+				L"with symbol loading then consider deleting them to restore the previous state.", wptDir.c_str());
+		AfxMessageBox(message.c_str());
 	}
-
-	if (failed)
-		AfxMessageBox(L"Failed to copy dbghelp.dll and symsrv.dll to the WPT directory. Is WPA running?");
-	else
-		AfxMessageBox(L"Copied dbghelp.dll and symsrv.dll to the WPT directory. If this doesn't help "
-				L"with symbol loading then consider deleting them to restore the previous state.");
 }
 
 

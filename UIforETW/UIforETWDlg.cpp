@@ -309,42 +309,45 @@ BOOL CUIforETWDlg::OnInitDialog()
 	wptDir_ = windowsKitsDir_ + L"8.1\\Windows Performance Toolkit\\";
 	wpt10Dir_ = windowsKitsDir_ + L"10\\Windows Performance Toolkit\\";
 
-	// Install WPT 8.1 and WPT 10 if needed and if available.
-	// The installers are available as part of etwpackage.zip on https://github.com/google/UIforETW/releases
-	if (!PathFileExists(GetXperfPath().c_str()))
+	if (Is64BitWindows())
 	{
-		// Windows 7 users need to have WPT 8.1 installed.
-		if (IsWindowsSevenOrLesser())
+		// Install 64-bit WPT 8.1 and WPT 10 if needed and if available.
+		// The installers are available as part of etwpackage.zip on https://github.com/google/UIforETW/releases
+		if (!PathFileExists(GetXperfPath().c_str()))
 		{
-			const std::wstring installPath81 = GetExeDir() + L"..\\third_party\\wpt81\\WPTx64-x86_en-us.msi";
-			if (PathFileExists(installPath81.c_str()))
+			// Windows 7 users need to have WPT 8.1 installed.
+			if (IsWindowsSevenOrLesser())
 			{
-				HINSTANCE installResult81 = ShellExecute(m_hWnd, L"open", installPath81.c_str(), nullptr, nullptr, SW_SHOWDEFAULT);
-				if (installResult81 > reinterpret_cast<HINSTANCE>(32))
+				const std::wstring installPath81 = GetExeDir() + L"..\\third_party\\wpt81\\WPTx64-x86_en-us.msi";
+				if (PathFileExists(installPath81.c_str()))
 				{
-					outputPrintf(L"WPT version 8.1 was installed.\n");
-				}
-				else
-				{
-					outputPrintf(L"Failure code %d while installing WPT 8.1.\n", reinterpret_cast<int>(installResult81));
+					HINSTANCE installResult81 = ShellExecute(m_hWnd, L"open", installPath81.c_str(), nullptr, nullptr, SW_SHOWDEFAULT);
+					if (installResult81 > reinterpret_cast<HINSTANCE>(32))
+					{
+						outputPrintf(L"WPT version 8.1 was installed.\n");
+					}
+					else
+					{
+						outputPrintf(L"Failure code %d while installing WPT 8.1.\n", reinterpret_cast<int>(installResult81));
+					}
 				}
 			}
 		}
-	}
-	// Everybody should have WPT 10 installed.
-	if (!PathFileExists((wpt10Dir_ + L"xperf.exe").c_str()))
-	{
-		const std::wstring installPath10 = GetExeDir() + L"..\\third_party\\wpt10\\WPTx64-x86_en-us.msi";
-		if (PathFileExists(installPath10.c_str()))
+		// Everybody should have WPT 10 installed.
+		if (!PathFileExists((wpt10Dir_ + L"xperf.exe").c_str()))
 		{
-			HINSTANCE installResult10 = ShellExecute(m_hWnd, L"open", installPath10.c_str(), nullptr, nullptr, SW_SHOWDEFAULT);
-			if (installResult10 > reinterpret_cast<HINSTANCE>(32))
+			const std::wstring installPath10 = GetExeDir() + L"..\\third_party\\wpt10\\WPTx64-x86_en-us.msi";
+			if (PathFileExists(installPath10.c_str()))
 			{
-				outputPrintf(L"WPT version 10 was installed.\n");
-			}
-			else
-			{
-				outputPrintf(L"Failure code %d while installing WPT 10.\n", reinterpret_cast<int>(installResult10));
+				HINSTANCE installResult10 = ShellExecute(m_hWnd, L"open", installPath10.c_str(), nullptr, nullptr, SW_SHOWDEFAULT);
+				if (installResult10 > reinterpret_cast<HINSTANCE>(32))
+				{
+					outputPrintf(L"WPT version 10 was installed.\n");
+				}
+				else
+				{
+					outputPrintf(L"Failure code %d while installing WPT 10.\n", reinterpret_cast<int>(installResult10));
+				}
 			}
 		}
 	}
@@ -354,20 +357,37 @@ BOOL CUIforETWDlg::OnInitDialog()
 		{
 			// WPT 10 (at least the 10240 version) doesn't record image ID information
 			// on Windows 7 and below, so the Windows 8.1 version of WPT is needed.
-			AfxMessageBox((GetXperfPath() + L" does not exist. Windows 7 and below require that "
-				L"WPT 8.1 be installed. If you run UIforETW from etwpackage.zip from\n"
-				L"https://github.com/google/UIforETW/releases\n"
-				L"then WPT will be automatically installed.").c_str());
+			if (Is64BitWindows())
+			{
+				AfxMessageBox((GetXperfPath() + L" does not exist. Windows 7 and below require that "
+					L"WPT 8.1 be installed. If you run UIforETW from etwpackage.zip from\n"
+					L"https://github.com/google/UIforETW/releases\n"
+					L"then WPT will be automatically installed. Exiting.").c_str());
+			}
+			else
+			{
+				AfxMessageBox((GetXperfPath() + L" does not exist. Windows 7 and below require that "
+					L"WPT 8.1 be installed. You'll need to find the installer in the Windows "
+					L"8.1 SDK. Exiting.").c_str());
+			}
 			exit(10);
 		}
 		std::wstring oldXperfPath = GetXperfPath();
 		wptDir_ = wpt10Dir_;
 		if (!PathFileExists(GetXperfPath().c_str()))
 		{
-			AfxMessageBox((oldXperfPath + L" and " + GetXperfPath() + L" do not exist. Please install WPT 8.1 or 10. Exiting."
-				L" If you run UIforETW from etwpackage.zip from\n"
-				L"https://github.com/google/UIforETW/releases\n"
-				L"then WPT will be automatically installed.").c_str());
+			if (Is64BitWindows())
+			{
+				AfxMessageBox((oldXperfPath + L" and " + GetXperfPath() + L" do not exist. Please install WPT 8.1 or 10. "
+					L"If you run UIforETW from etwpackage.zip from\n"
+					L"https://github.com/google/UIforETW/releases\n"
+					L"then WPT will be automatically installed. Exiting.").c_str());
+			}
+			else
+			{
+				AfxMessageBox((oldXperfPath + L" and " + GetXperfPath() + L" do not exist. Please install WPT 8.1 or 10. "
+					L"You'll need to find the installers in the Windows 8.1 or 10 SDKs. Exiting.").c_str());
+			}
 			exit(10);
 		}
 	}
@@ -831,7 +851,7 @@ void CUIforETWDlg::OnBnClickedStarttracing()
 	}
 
 	// Increase the user buffer sizes when doing graphics tracing or Chrome tracing.
-	const int numUserBuffers = BufferCountBoost(bGPUTracing_ ? 200 : 100) + BufferCountBoost(useChromeProviders_ ? 300 : 0);
+	const int numUserBuffers = BufferCountBoost(bGPUTracing_ ? 200 : 100) + BufferCountBoost(useChromeProviders_ ? 100 : 0);
 	std::wstring userBuffers = stringPrintf(L" -buffersize 1024 -minbuffers %d -maxbuffers %d", numUserBuffers, numUserBuffers);
 	std::wstring userFile = L" -f \"" + GetUserFile() + L"\"";
 	if (tracingMode_ == kTracingToMemory)
@@ -1442,6 +1462,8 @@ void CUIforETWDlg::SetHeapTracing(bool forceOff)
 		CreateRegistryKey(HKEY_LOCAL_MACHINE, targetKey, tracingName);
 		targetKey += L"\\" + tracingName;
 		SetRegistryDWORD(HKEY_LOCAL_MACHINE, targetKey, L"TracingFlags", tracingFlags);
+		if (tracingFlags)
+			outputPrintf(L"\"TracingFlags\" in \"HKEY_LOCAL_MACHINE\\%s\" set to %lu.\n", targetKey.c_str(), tracingFlags);
 	}
 }
 
@@ -1470,7 +1492,7 @@ void CUIforETWDlg::OnCbnSelchangeTracingmode()
 
 void CUIforETWDlg::OnBnClickedSettings()
 {
-	CSettings dlgSettings(nullptr, GetExeDir(), GetWPTDir());
+	CSettings dlgSettings(nullptr, GetExeDir(), GetWPTDir(), wpt10Dir_);
 	dlgSettings.heapTracingExes_ = heapTracingExes_;
 	dlgSettings.WSMonitoredProcesses_ = WSMonitoredProcesses_;
 	dlgSettings.bExpensiveWSMonitoring_ = bExpensiveWSMonitoring_;
@@ -1584,6 +1606,7 @@ void CUIforETWDlg::OnContextMenu(CWnd* pWnd, CPoint point)
 				ID_TRACES_STRIPCHROMESYMBOLS,
 				ID_TRACES_IDENTIFYCHROMEPROCESSES,
 				ID_TRACES_TRACEPATHTOCLIPBOARD,
+				ID_SCRIPTS_CREATEFLAMEGRAPH,
 			};
 
 			for (const auto& id : disableList)
@@ -1646,6 +1669,9 @@ void CUIforETWDlg::OnContextMenu(CWnd* pWnd, CPoint point)
 				outputPrintf(L"\n");
 				IdentifyChromeProcesses(tracePath);
 				UpdateNotesState();
+				break;
+			case ID_SCRIPTS_CREATEFLAMEGRAPH:
+				CreateFlameGraph(tracePath);
 				break;
 			case ID_TRACES_TRACEPATHTOCLIPBOARD:
 				// Comma delimited for easy pasting into DOS commands.
@@ -1840,6 +1866,23 @@ void CUIforETWDlg::IdentifyChromeProcesses(const std::wstring& traceFilename)
 		std::wstring textFilename = StripExtensionFromPath(traceFilename) + L".txt";
 		std::wstring data = LoadFileAsText(textFilename) + output;
 		WriteTextAsFile(textFilename, data);
+	}
+	else
+	{
+		outputPrintf(L"Couldn't find python.\n");
+	}
+}
+
+
+void CUIforETWDlg::CreateFlameGraph(const std::wstring& traceFilename)
+{
+	outputPrintf(L"\nCreating CPU Usage (Sampled) flame graph of busiest process ((requires python, perl and flamegraph.pl)...\n");
+	std::wstring pythonPath = FindPython();
+	if (!pythonPath.empty())
+	{
+		ChildProcess child(pythonPath);
+		std::wstring args = L" -u \"" + GetExeDir() + L"xperf_to_collapsedstacks.py\" \"" + traceFilename + L"\"";
+		child.Run(bShowCommands_, GetFilePart(pythonPath) + args);
 	}
 	else
 	{
